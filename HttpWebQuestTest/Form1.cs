@@ -7,60 +7,23 @@ using System.Linq;
 using System.Text;
 using System.Windows.Forms;
 using System.Threading;
+using System.Net;
+using System.IO;
+using mshtml;
 
-namespace WebBrowserT
+namespace HttpWebQuestTest
 {
     public partial class Form1 : Form
     {
         const string format = "总共需要查询{0}个考生，现在正在查询第{1}个考生.";
+        //bool bQuerying = false;      //查询状态
         string sPath = System.IO.Directory.GetCurrentDirectory() + "/考生考号.txt";
-        bool bQuerying = false;      //查询状态
-        WebBrowser browser = new WebBrowser();
         int nTotalNum = 0;
         int nCurNum = 0;
 
         public Form1()
         {
             InitializeComponent();
-            textBox1.Enabled = false;
-            textBox2.Enabled = false;
-            buttonQuery.Enabled = false;
-        }
-
-        private void Form1_Load(object sender, EventArgs e)
-        {
-            browser.Navigate("http://www.cczsb.com/zklq_2010.asp");           
-            browser.DocumentCompleted += WebBrowserDocumentCompleted;
-        }
-
-        private void WebBrowserDocumentCompleted(object sender, WebBrowserDocumentCompletedEventArgs e)
-        {
-            textBox1.Enabled = true;
-            textBox2.Enabled = true;
-            buttonQuery.Enabled = true;
-            label1.Visible = false;
-
-            if (bQuerying)
-            {
-                string info = string.Empty;
-                HtmlElement element = this.browser.Document.GetElementById("table33");
-                foreach (HtmlElement el in element.All)
-                {
-                    if (el.TagName.ToUpper() == "TD")
-                    {
-                        info += el.InnerText.Trim() + "\t";
-                    }
-                }
-
-                WriteToFile(info + "\r\n");
-
-                nCurNum++;
-                if (nCurNum == nTotalNum)
-                {
-                    MessageBox.Show("查询完成！");
-                }
-            }
-            bQuerying = false;
         }
 
         private void buttonQuery_Click(object sender, EventArgs e)
@@ -73,13 +36,13 @@ namespace WebBrowserT
                 lblMsg.Text = "考号的长度必须为9！";
                 return;
             }
-            if (sKH1.Substring(0,5)!="17701" || sKH2.Substring(0,5)!="17701")
+            if (sKH1.Substring(0, 5) != "17701" || sKH2.Substring(0, 5) != "17701")
             {
                 lblMsg.Text = "考号的前5位必须为17701!";
                 return;
             }
-            if ( !(Convert.ToInt32(sKH1.Substring(5,2))>=60 && Convert.ToInt32(sKH1.Substring(5,2))<=90)
-                || !(Convert.ToInt32(sKH2.Substring(5, 2)) >= 60 && Convert.ToInt32(sKH2.Substring(5, 2)) <= 90) 
+            if (!(Convert.ToInt32(sKH1.Substring(5, 2)) >= 60 && Convert.ToInt32(sKH1.Substring(5, 2)) <= 90)
+                || !(Convert.ToInt32(sKH2.Substring(5, 2)) >= 60 && Convert.ToInt32(sKH2.Substring(5, 2)) <= 90)
                 )
             {
                 lblMsg.Text = "考号的第六位和第七位必须为是60和90之间的数!";
@@ -115,7 +78,7 @@ namespace WebBrowserT
                             sTemp = "17701" + i.ToString("D2") + j.ToString("D2");
                             urls.Add(sTemp);
                         }
-                    } 
+                    }
                     else
                     {
                         for (int j = iKH1_89; j <= 30; j++)
@@ -145,12 +108,12 @@ namespace WebBrowserT
 
             nTotalNum = urls.Count;
             nCurNum = 0;
-            
+
             if (System.IO.File.Exists(sPath))
             {
                 System.IO.File.Delete(sPath);
             }
-            System.IO.File.Create(sPath);
+            //System.IO.File.Create(sPath);
 
             GetHtml(urls.ToArray());
         }
@@ -158,35 +121,81 @@ namespace WebBrowserT
         private void GetHtml(string[] urls)
         {
             ThreadPool.QueueUserWorkItem(new WaitCallback(delegate(object obj)
+            {
+                foreach (string url in urls)
                 {
-                    foreach (string url in urls)
-                    {
-                        this.Invoke(new Action(delegate() { lblMsg.Text = string.Format(format, nTotalNum, nCurNum + 1); }));
-                        bQuerying = true;
-                        BeginSearch(url);
-                        while (bQuerying)
-                        {
-                            Application.DoEvents();
-                        }
-                    }
-                }));
+                    this.Invoke(new Action(delegate() { lblMsg.Text = string.Format(format, nTotalNum, nCurNum + 1); }));
+
+                    BeginSearch(url);
+                }
+            }));
         }
 
         private void BeginSearch(string sKH)
         {
-            Action a = delegate()
+            //这样是可以的，当然也可以用Post方式
+            //string urlAddr = string.Format("http://www.cczsb.com/zklq_2010.asp?kskh={0}",sKH);
+            //HttpWebRequest request = WebRequest.Create(urlAddr) as HttpWebRequest;
+            //这是POST方式,好像使用这种方式查询有点慢
+            string urlAddr = "http://www.cczsb.com/zklq_2010.asp";
+            string postData = "kskh=" + sKH;
+            byte[] post = ASCIIEncoding.ASCII.GetBytes(postData);
+            HttpWebRequest request = WebRequest.Create(urlAddr) as HttpWebRequest;
+            request.Method = "POST";
+            request.ContentType = "application/x-www-form-urlencoded";
+            request.ContentLength = post.Length;
+            using (Stream streamWrite = request.GetRequestStream())
             {
-                HtmlElement ksElement = browser.Document.All["kskh"];
-                ksElement.SetAttribute("value", sKH);
-                foreach (HtmlElement element in browser.Document.All)
+                streamWrite.Write(post, 0, post.Length);
+                streamWrite.Close();
+            }
+
+            HttpWebResponse webResponse = request.GetResponse() as HttpWebResponse;
+            Stream stream = webResponse.GetResponseStream();
+            using (StreamReader sr = new StreamReader(stream, Encoding.Default))
+            {
+                string html = sr.ReadToEnd();
+                stream.Close();
+
+                ProcessHtml(html);
+            }
+        }
+
+        private void ProcessHtml(string html)
+        {
+            IHTMLDocument2 doc = new HTMLDocumentClass();
+            doc.write(new object[] { html });
+            string title = doc.title;
+
+            IHTMLElementCollection elc = (IHTMLElementCollection)doc.all.tags("table");
+            int leng = elc.length;
+            foreach (IHTMLElement el in elc)
+            {                
+                string id = el.id;
+                if (id == "table33")
                 {
-                    if (element.OuterHtml == "<INPUT value=提交查询内容 type=submit>")
+                    IHTMLElementCollection chc = (IHTMLElementCollection)el.all;
+                    int length = chc.length;
+                    string info = string.Empty;
+                    foreach (IHTMLElement cel in chc)
                     {
-                        element.InvokeMember("click");
+                        string tagName = cel.tagName;
+                        if (tagName.ToUpper() == "TD")
+                        {
+                            string innerText = cel.innerText;
+                            info += innerText.Trim() + "\t";
+                        }                        
                     }
+                    WriteToFile(info + "\r\n"); 
+                    break;
                 }
-            };
-            this.Invoke(a);
+            }
+
+            nCurNum++;
+            if (nCurNum == nTotalNum)
+            {
+                MessageBox.Show("查询完成");
+            }
         }
 
         private void WriteToFile(string text)

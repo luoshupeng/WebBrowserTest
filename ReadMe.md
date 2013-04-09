@@ -6,3 +6,6 @@
 ### 有什么特点:  
 1. 在WebBrowser.Document中查找没有名称的元素  
 2. 多线程中调用WebBrowser  
+
+3. 增加了使用HttpWebRequest的POST方式获取数据  
+4. 使用mshtml.IHTMLDocument2解析HTML数据
